@@ -1,0 +1,1 @@
+# Core components for Claude-Puppeteer WebRTC testing system
