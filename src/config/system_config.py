@@ -6,6 +6,7 @@ Handles environment variables and system settings
 import os
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 
 @dataclass
 class SystemConfig:
@@ -42,6 +43,14 @@ class SystemConfig:
     max_retries: int = 3
     screenshot_quality: int = 80
     enable_verbose_logging: bool = True
+    
+    # Directory Configuration
+    screenshot_dir: Path = Path("./screenshots")
+    log_dir: Path = Path("./logs")
+    
+    # Test Configuration
+    test_retry_count: int = 3
+    test_timeout: int = 300
     
     @classmethod
     def load_from_env(cls) -> 'SystemConfig':
@@ -88,5 +97,54 @@ class SystemConfig:
             # Execution Configuration
             max_retries=int(os.getenv('MAX_RETRIES', '3')),
             screenshot_quality=int(os.getenv('SCREENSHOT_QUALITY', '80')),
-            enable_verbose_logging=os.getenv('ENABLE_VERBOSE_LOGGING', 'true').lower() == 'true'
+            enable_verbose_logging=os.getenv('ENABLE_VERBOSE_LOGGING', 'true').lower() == 'true',
+            
+            # Directory Configuration
+            screenshot_dir=Path(os.getenv('SCREENSHOT_DIR', './screenshots')),
+            log_dir=Path(os.getenv('LOG_DIR', './logs')),
+            
+            # Test Configuration
+            test_retry_count=int(os.getenv('TEST_RETRY_COUNT', '3')),
+            test_timeout=int(os.getenv('TEST_TIMEOUT', '300'))
         )
+    
+    def __post_init__(self):
+        """Post-initialization setup"""
+        # Ensure directories exist
+        self.screenshot_dir.mkdir(exist_ok=True)
+        self.log_dir.mkdir(exist_ok=True)
+    
+    def get_pine_ridge_url(self, channel_id: str = None, uid: str = None) -> str:
+        """Generate Pine Ridge URL with parameters"""
+        channel = channel_id or self.default_channel_id
+        user_id = uid or "TestUser"
+        
+        # Build URL with required parameters
+        url = f"{self.pine_ridge_base_url}?"
+        params = [
+            f"PAK={self.pak_token}",
+            f"UID={user_id}",
+            f"CID={channel}",
+            "ALLOWPUBLISHAUDIO=1",
+            "ALLOWPUBLISHVIDEO=1",
+            "ALLOWPUBLISHSCREENSHARE=1",
+            "ALLOWBOTCHAT=1",
+            "ALLOWVOICEDATACOLLECTION=1"
+        ]
+        
+        return url + "&".join(params)
+    
+    def validate_config(self) -> bool:
+        """Validate configuration is complete"""
+        required_fields = [
+            'pine_ridge_base_url',
+            'pak_token',
+            'claude_api_key'
+        ]
+        
+        for field in required_fields:
+            if not getattr(self, field):
+                print(f"❌ Missing required configuration: {field}")
+                return False
+        
+        return True

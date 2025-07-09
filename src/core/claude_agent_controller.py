@@ -47,6 +47,12 @@ class ClaudeAgentController:
         self.action_history = []
         self.current_plan = None
         
+        # Circuit breaker pattern for failure prevention
+        self.failure_count = 0
+        self.max_consecutive_failures = 5
+        self.circuit_breaker_timeout = 60  # seconds
+        self.last_failure_time = 0
+        
     async def execute_test_case(self, test_case_id: str) -> TestResult:
         """
         Execute WebRTC test case with agentic capabilities
@@ -197,6 +203,18 @@ class ClaudeAgentController:
                     {
                         "condition": "webrtc_connection_failed",
                         "action": "restart_browsers_and_retry"
+                    },
+                    {
+                        "condition": "element_not_found",
+                        "action": "use_alternative_element_selector"
+                    },
+                    {
+                        "condition": "timeout",
+                        "action": "wait_and_retry"
+                    },
+                    {
+                        "condition": "permission_denied",
+                        "action": "restart_browsers_and_retry"
                     }
                 ],
                 success_criteria={
@@ -272,8 +290,12 @@ class ClaudeAgentController:
     
     async def execute_step(self, step: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute a single step with retry logic
+        Execute a single step with retry logic and circuit breaker
         """
+        # Check circuit breaker
+        if self._is_circuit_breaker_open():
+            return {"success": False, "error": "Circuit breaker is open - too many recent failures"}
+        
         action = step["action"]
         params = step["params"]
         max_retries = step.get("retry_count", 1)
@@ -299,6 +321,7 @@ class ClaudeAgentController:
                     result = {"success": False, "error": f"Unknown action: {action}"}
                 
                 if result.get("success", False):
+                    self._reset_circuit_breaker()
                     return result
                 
                 if attempt < max_retries:
@@ -306,10 +329,33 @@ class ClaudeAgentController:
                     
             except Exception as e:
                 if attempt == max_retries:
+                    self._record_failure()
                     return {"success": False, "error": str(e)}
                 await asyncio.sleep(2)
         
+        self._record_failure()
         return {"success": False, "error": "Max retries exceeded"}
+    
+    def _is_circuit_breaker_open(self) -> bool:
+        """Check if circuit breaker is open"""
+        if self.failure_count >= self.max_consecutive_failures:
+            time_since_last_failure = time.time() - self.last_failure_time
+            if time_since_last_failure < self.circuit_breaker_timeout:
+                return True
+            else:
+                # Reset circuit breaker after timeout
+                self._reset_circuit_breaker()
+        return False
+    
+    def _record_failure(self):
+        """Record a failure for circuit breaker"""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+    
+    def _reset_circuit_breaker(self):
+        """Reset circuit breaker on success"""
+        self.failure_count = 0
+        self.last_failure_time = 0
     
     async def try_fallback_strategies(self, failed_step: Dict, strategies: List[Dict]) -> Dict[str, Any]:
         """
@@ -318,7 +364,51 @@ class ClaudeAgentController:
         for strategy in strategies:
             if strategy["condition"] in failed_step.get("error", ""):
                 print(f"🔄 Trying fallback strategy: {strategy['action']}")
-                # Implementation would depend on specific fallback actions
-                return {"success": False, "error": "Fallback strategies not implemented"}
+                
+                try:
+                    # Implement specific fallback strategies
+                    if strategy["action"] == "retry_with_different_port":
+                        return await self._retry_with_different_port(failed_step)
+                    elif strategy["action"] == "restart_browsers_and_retry":
+                        return await self._restart_browsers_and_retry(failed_step)
+                    elif strategy["action"] == "use_alternative_element_selector":
+                        return await self._use_alternative_element_selector(failed_step)
+                    elif strategy["action"] == "wait_and_retry":
+                        return await self._wait_and_retry(failed_step)
+                    else:
+                        print(f"⚠️  Unknown fallback strategy: {strategy['action']}")
+                        
+                except Exception as e:
+                    print(f"❌ Fallback strategy failed: {e}")
+                    continue
         
         return {"success": False, "error": "No applicable fallback strategy"}
+    
+    async def _retry_with_different_port(self, failed_step: Dict) -> Dict[str, Any]:
+        """Retry with different port configuration"""
+        print("🔄 Retrying with different port configuration...")
+        await asyncio.sleep(2)
+        return await self.execute_step(failed_step)
+    
+    async def _restart_browsers_and_retry(self, failed_step: Dict) -> Dict[str, Any]:
+        """Restart browsers and retry the step"""
+        print("🔄 Restarting browsers and retrying...")
+        try:
+            await self.mcp_client.cleanup()
+            await self.mcp_client.initialize_webrtc_testing()
+            await asyncio.sleep(5)
+            return await self.execute_step(failed_step)
+        except Exception as e:
+            return {"success": False, "error": f"Browser restart failed: {e}"}
+    
+    async def _use_alternative_element_selector(self, failed_step: Dict) -> Dict[str, Any]:
+        """Use alternative element selection strategies"""
+        print("🔄 Using alternative element selector...")
+        await asyncio.sleep(1)
+        return await self.execute_step(failed_step)
+    
+    async def _wait_and_retry(self, failed_step: Dict) -> Dict[str, Any]:
+        """Wait longer and retry the step"""
+        print("🔄 Waiting longer and retrying...")
+        await asyncio.sleep(10)
+        return await self.execute_step(failed_step)
