@@ -58,7 +58,10 @@ class PuppeteerMCPClient:
                 '--disable-dev-shm-usage',
                 '--disable-extensions',
                 '--disable-plugins',
-                '--disable-default-apps'
+                '--disable-default-apps',
+                # Simple positioning: Chrome left half, full height
+                '--window-position=0,0',
+                '--window-size=960,1080'
             ]
         }
         
@@ -114,7 +117,7 @@ class PuppeteerMCPClient:
             # Create context with media permissions
             context = await self.chrome_browser.new_context(
                 permissions=['camera', 'microphone'],
-                viewport={'width': 1280, 'height': 720}
+                viewport={'width': 960, 'height': 1080}
             )
             
             # Grant media permissions for Pine Ridge domain
@@ -216,12 +219,11 @@ class PuppeteerMCPClient:
             # Launch Safari using Playwright's webkit engine (Safari on macOS)
             self.safari_browser = await self.playwright.webkit.launch(
                 headless=False,  # Always non-headless for human verification
-                # Safari/WebKit doesn't support custom args like Chromium
             )
             
             # Create context with media permissions for Safari/WebKit
             context = await self.safari_browser.new_context(
-                viewport={'width': 1280, 'height': 720},
+                viewport={'width': 960, 'height': 1080},
                 # Use geolocation permission as a workaround for media permissions
                 geolocation={'latitude': 37.7749, 'longitude': -122.4194}
             )
@@ -320,6 +322,19 @@ class PuppeteerMCPClient:
             print(f"📱 Navigating to: {url}")
             await page.goto(url, wait_until='networkidle')
             
+            # Position Safari window on the right side
+            await page.evaluate("""
+                () => {
+                    // Move window to right side (960px from left)
+                    if (window.moveTo) {
+                        window.moveTo(960, 0);
+                    }
+                    if (window.resizeTo) {
+                        window.resizeTo(960, 1080);
+                    }
+                }
+            """)
+            
             # Store browser instance
             self.browsers['safari'] = {
                 'browser': self.safari_browser,
@@ -405,11 +420,11 @@ class PuppeteerMCPClient:
     
     async def publish_audio_stream(self, params: Dict) -> Dict[str, Any]:
         """
-        Publish audio and video stream in Chrome browser
+        Publish audio stream in Chrome browser (audio only, no video)
         """
         try:
             browser_id = params.get("browser", "chrome")
-            print(f"🎤 Publishing audio and video stream in {browser_id}...")
+            print(f"🎤 Publishing audio stream in {browser_id}...")
             
             if browser_id not in self.browsers:
                 return {"success": False, "error": f"Browser {browser_id} not found"}
@@ -426,32 +441,29 @@ class PuppeteerMCPClient:
                 # Wait for dropdown to appear
                 await asyncio.sleep(2)
                 
-                # Step 2: Click "Publish Audio" from dropdown
+                # Step 2: Click "Publish Audio" from dropdown (audio only)
                 audio_success = await self.click_publish_audio_option(page)
                 
-                # Step 3: Click "Publish Video" from dropdown  
-                video_success = await self.click_publish_video_option(page)
-                
-                # Wait for streams to start
+                # Wait for audio stream to start
                 await asyncio.sleep(5)
                 
                 # Verify publishing state
                 is_publishing = await self.verify_audio_publishing(page)
                 
-                if audio_success and video_success and is_publishing:
-                    print(f"✅ Audio and video streams published successfully in {browser_id}")
+                if audio_success and is_publishing:
+                    print(f"✅ Audio stream published successfully in {browser_id}")
                     return {
                         "success": True,
                         "browser_id": browser_id,
                         "stream_active": True,
                         "audio_published": audio_success,
-                        "video_published": video_success,
-                        "message": "Audio and video streams published successfully"
+                        "video_published": False,  # No video publishing
+                        "message": "Audio stream published successfully"
                     }
                 else:
                     return {
                         "success": False,
-                        "error": f"Publishing failed - Audio: {audio_success}, Video: {video_success}, Verified: {is_publishing}"
+                        "error": f"Publishing failed - Audio: {audio_success}, Verified: {is_publishing}"
                     }
             else:
                 return {
